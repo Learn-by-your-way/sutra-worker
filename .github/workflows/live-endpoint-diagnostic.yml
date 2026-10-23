@@ -18,13 +18,15 @@ jobs:
         run: |
           set -euo pipefail
           URL='https://sutra.skmishraofficial.workers.dev/api/live/ws?class=TEST&t=invalid-diagnostic-token'
-          CODE="$(curl --silent --show-error --max-time 20 -o response.txt -w '%{http_code}' \
+          CODE="$(curl --http1.1 --silent --show-error --max-time 20 -D response-headers.txt -o response.txt -w '%{http_code}' \
             -H 'Upgrade: websocket' \
             -H 'Connection: Upgrade' \
             -H 'Sec-WebSocket-Version: 13' \
             -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
             "$URL")"
           echo "HTTP_STATUS=$CODE"
+          echo "RESPONSE_HEADERS:"
+          cat response-headers.txt
           echo "RESPONSE_BODY:"
           cat response.txt
           echo
@@ -36,6 +38,11 @@ jobs:
             503)
               echo "RESULT=LIVE_BINDING_MISSING_OR_UNAVAILABLE"
               echo "The Worker reports live_not_configured; inspect the LIVE Durable Object binding on the deployed sutra Worker."
+              exit 1
+              ;;
+            404)
+              echo "RESULT=LIVE_ROUTE_REACHED_BUT_UPGRADE_NOT_ACCEPTED_OR_ROUTE_MISSING"
+              echo "The deployed endpoint returned the Live handler’s Not found response. Check whether the deployed Worker source contains the route and whether a true WebSocket Upgrade reaches it."
               exit 1
               ;;
             403)
