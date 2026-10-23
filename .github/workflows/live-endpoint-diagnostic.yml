@@ -1,0 +1,51 @@
+name: Sutra Live endpoint diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - live-fix-v002
+    paths:
+      - ".github/workflows/live-endpoint-diagnostic.yml"
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe production Live endpoint without credentials
+        id: probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://sutra.skmishraofficial.workers.dev/api/live/ws?class=TEST&t=invalid-diagnostic-token'
+          CODE="$(curl --silent --show-error --max-time 20 -o response.txt -w '%{http_code}' \
+            -H 'Upgrade: websocket' \
+            -H 'Connection: Upgrade' \
+            -H 'Sec-WebSocket-Version: 13' \
+            -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+            "$URL")"
+          echo "HTTP_STATUS=$CODE"
+          echo "RESPONSE_BODY:"
+          cat response.txt
+          echo
+          case "$CODE" in
+            401)
+              echo "RESULT=LIVE_BINDING_REACHABLE_AUTH_REJECTED_INVALID_TOKEN"
+              echo "The Worker reached its token validation path. This confirms the LIVE binding check passed, but does not prove an authorized WebSocket works."
+              ;;
+            503)
+              echo "RESULT=LIVE_BINDING_MISSING_OR_UNAVAILABLE"
+              echo "The Worker reports live_not_configured; inspect the LIVE Durable Object binding on the deployed sutra Worker."
+              exit 1
+              ;;
+            403)
+              echo "RESULT=FORBIDDEN"
+              echo "The request was rejected before the expected invalid-token response; inspect edge/access policy and Worker route."
+              exit 1
+              ;;
+            *)
+              echo "RESULT=UNEXPECTED_STATUS"
+              echo "Unexpected response. Review body and production route configuration."
+              exit 1
+              ;;
+          esac
