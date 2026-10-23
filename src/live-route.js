@@ -73,7 +73,7 @@ export async function handleLiveWebSocket(request, env, identity) {
     url.searchParams.get("roomId") ||
     url.searchParams.get("classId");
 
-  if (!rawRoom || /[\u0000-\u001f]/.test(rawRoom) || rawRoom.length > 120) {
+  if (!rawRoom || !/^[A-Za-z0-9-]{2,40}$/.test(rawRoom)) {
     return new Response("A valid room/class ID is required", {
       status: 400,
       headers: NO_STORE,
