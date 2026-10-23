@@ -1,12 +1,12 @@
 /**
- * VEDNEX SUTRA — Live WebSocket gateway patch v001
+ * VEDNEX SUTRA — Live WebSocket gateway patch v002
  *
- * Integration helper for the EXISTING main Sutra Worker.
- * Invoke only after existing session/login AND course/live-access checks pass.
- * Pass identity values derived from the verified server-side session, never from
- * query parameters or client-supplied X-Live-* headers.
+ * Isolated helper for the EXISTING main Sutra Worker.
+ * Call only after existing session/login AND course/live-access checks pass.
+ * identity must come from the verified server-side session, never from request
+ * headers, query parameters, or client-provided role/UID values.
  *
- * Example after your existing authorization:
+ * Expected call inside the already-authorized path:
  *   const liveResponse = await handleLiveWebSocket(request, env, {
  *     uid: verifiedUser.id,
  *     role: verifiedUser.isTeacher ? "teacher" : "student",
@@ -15,40 +15,48 @@
  *   });
  *   if (liveResponse) return liveResponse;
  *
- * Adapt verifiedUser fields to your real session model before integrating.
- * Do NOT deploy this helper as a standalone replacement for the production Worker.
+ * Adapt verifiedUser fields to the real session model before integration.
+ * This helper is NOT a standalone replacement for the production Worker.
  */
+const NO_STORE = { "Cache-Control": "no-store" };
+
 export async function handleLiveWebSocket(request, env, identity) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
-  if (path !== "/live" && path !== "/api/live") return null;
+  // The known frontend/backend contract uses /api/live/ws.
+  // Keep legacy candidates for compatibility; confirm the live frontend path before deployment.
+  if (!["/api/live/ws", "/api/live", "/live"].includes(path)) return null;
 
   if (request.method !== "GET") {
     return new Response("Method not allowed", {
       status: 405,
-      headers: { "Allow": "GET", "Cache-Control": "no-store" },
+      headers: { ...NO_STORE, "Allow": "GET" },
     });
   }
 
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return new Response("WebSocket upgrade required", {
       status: 426,
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE,
     });
   }
 
-  if (!identity || !identity.uid || !["student", "teacher", "staff", "admin"].includes(identity.role)) {
+  if (
+    !identity ||
+    !String(identity.uid || "").trim() ||
+    !["student", "teacher", "staff", "admin"].includes(identity.role)
+  ) {
     return new Response("Live authorization required", {
       status: 401,
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE,
     });
   }
 
-  if (!env.LIVE || typeof env.LIVE.idFromName !== "function") {
+  if (!env.LIVE || typeof env.LIVE.idFromName !== "function" || typeof env.LIVE.get !== "function") {
     return new Response("Live service is not configured", {
       status: 503,
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE,
     });
   }
 
@@ -59,18 +67,23 @@ export async function handleLiveWebSocket(request, env, identity) {
   if (!rawRoom || /[\u0000-\u001f]/.test(rawRoom) || rawRoom.length > 120) {
     return new Response("A valid room/class ID is required", {
       status: 400,
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE,
     });
   }
 
-  // Override client-supplied identity headers with values from verified server-side auth.
+  // Replace all client-supplied identity headers with trusted server-side values.
   const headers = new Headers(request.headers);
-  headers.set("X-Live-Uid", String(identity.uid).slice(0, 80));
-  headers.set("X-Live-Role", identity.role === "teacher" || identity.role === "staff" || identity.role === "admin" ? "teacher" : "student");
+  for (const key of ["X-Live-Uid", "X-Live-Role", "X-Live-Name", "X-Live-Ctrl"]) {
+    headers.delete(key);
+  }
+
+  const role = identity.role;
+  const canControl = identity.ctrl === true && ["teacher", "staff", "admin"].includes(role);
+  headers.set("X-Live-Uid", String(identity.uid).trim().slice(0, 80));
+  headers.set("X-Live-Role", role === "student" ? "student" : "teacher");
   headers.set("X-Live-Name", String(identity.name || "").replace(/[\u0000-\u001f]/g, " ").slice(0, 100));
-  headers.set("X-Live-Ctrl", identity.ctrl === true && ["teacher", "staff", "admin"].includes(identity.role) ? "1" : "0");
+  headers.set("X-Live-Ctrl", canControl ? "1" : "0");
 
   const forwardRequest = new Request(request, { headers });
-  const id = env.LIVE.idFromName(rawRoom);
-  return env.LIVE.get(id).fetch(forwardRequest);
+  return env.LIVE.get(env.LIVE.idFromName(rawRoom)).fetch(forwardRequest);
 }
