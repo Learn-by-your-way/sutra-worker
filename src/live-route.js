@@ -2,11 +2,17 @@
  * VEDNEX SUTRA — Live WebSocket gateway patch v002
  *
  * Isolated helper for the EXISTING main Sutra Worker.
- * Call only after existing session/login AND course/live-access checks pass.
+ * Call only after the existing session/login AND course/live-access checks pass.
  * identity must come from the verified server-side session, never from request
  * headers, query parameters, or client-provided role/UID values.
  *
- * Expected call inside the already-authorized path:
+ * Known frontend contract:
+ *   wss://sutra.skmishraofficial.workers.dev/api/live/ws?class=<ClassID>&t=<session-token>
+ *
+ * The main Worker must validate the session token and class entitlement itself
+ * before calling this helper. This helper does not authenticate the token.
+ *
+ * Example after verified session + entitlement:
  *   const liveResponse = await handleLiveWebSocket(request, env, {
  *     uid: verifiedUser.id,
  *     role: verifiedUser.isTeacher ? "teacher" : "student",
@@ -15,18 +21,18 @@
  *   });
  *   if (liveResponse) return liveResponse;
  *
- * Adapt verifiedUser fields to the real session model before integration.
+ * Adapt verifiedUser fields to the actual production session model before integration.
  * This helper is NOT a standalone replacement for the production Worker.
  */
 const NO_STORE = { "Cache-Control": "no-store" };
+
+const LIVE_PATHS = new Set(["/api/live/ws", "/api/live", "/live"]);
 
 export async function handleLiveWebSocket(request, env, identity) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
-  // The known frontend/backend contract uses /api/live/ws.
-  // Keep legacy candidates for compatibility; confirm the live frontend path before deployment.
-  if (!["/api/live/ws", "/api/live", "/live"].includes(path)) return null;
+  if (!LIVE_PATHS.has(path)) return null;
 
   if (request.method !== "GET") {
     return new Response("Method not allowed", {
@@ -60,9 +66,12 @@ export async function handleLiveWebSocket(request, env, identity) {
     });
   }
 
-  const rawRoom = url.searchParams.get("room")
-    || url.searchParams.get("roomId")
-    || url.searchParams.get("classId");
+  // The deployed frontend uses ?class=<ClassID>. Keep aliases for older callers.
+  const rawRoom =
+    url.searchParams.get("class") ||
+    url.searchParams.get("room") ||
+    url.searchParams.get("roomId") ||
+    url.searchParams.get("classId");
 
   if (!rawRoom || /[\u0000-\u001f]/.test(rawRoom) || rawRoom.length > 120) {
     return new Response("A valid room/class ID is required", {
