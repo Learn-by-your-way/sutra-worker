@@ -1,5 +1,5 @@
 /**
- * VEDNEX SUTRA — Live WebSocket gateway patch v002
+ * VEDNEX SUTRA — Live WebSocket gateway patch v003
  *
  * Isolated helper for the EXISTING main Sutra Worker.
  * Call only after existing session/login AND course/live-access checks pass.
@@ -60,7 +60,10 @@ export async function handleLiveWebSocket(request, env, identity) {
     });
   }
 
-  const rawRoom = url.searchParams.get("room")
+  // The previously observed frontend request uses ?class=CL-DEMO-01.
+  // Accept that established parameter alongside the newer aliases.
+  const rawRoom = url.searchParams.get("class")
+    || url.searchParams.get("room")
     || url.searchParams.get("roomId")
     || url.searchParams.get("classId");
 
